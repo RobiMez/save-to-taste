@@ -88,65 +88,14 @@ const upload = async (bytes, type, { source, width, height }) => {
 	return body;
 };
 
-// ---- In-page helpers. Injected with scripting.executeScript, so each one is
-// self-contained: no references to anything outside its own body. -----------
-
-function showToast(text, state) {
-	const id = 'save-to-taste-toast';
-	let toast = document.getElementById(id);
-	if (!toast) {
-		toast = document.createElement('div');
-		toast.id = id;
-		toast.setAttribute('role', 'status');
-		Object.assign(toast.style, {
-			position: 'fixed',
-			right: '16px',
-			bottom: '16px',
-			zIndex: '2147483647',
-			maxWidth: '320px',
-			padding: '10px 14px',
-			borderRadius: '10px',
-			background: 'rgb(24 24 24 / 0.94)',
-			color: 'white',
-			font: '13px/1.4 system-ui, -apple-system, sans-serif',
-			boxShadow: '0 0 0 1px rgb(255 255 255 / 0.08)'
-		});
-		document.documentElement.append(toast);
-	}
-	toast.textContent = text;
-	toast.style.color = state === 'error' ? 'rgb(255 170 160)' : 'white';
-	clearTimeout(toast._hide);
-	if (state !== 'busy')
-		toast._hide = setTimeout(() => toast.remove(), state === 'error' ? 6000 : 3000);
-}
+// ---- In-page helper. Injected with scripting.executeScript, so it's
+// self-contained; the indicator itself is page.js (globalThis.tasteToast). ---
 
 // Finds the video that was right-clicked. A real file comes back as its URL;
 // a streamed one is recorded as it plays (from the start, up to a minute) and
 // comes back as webm bytes.
 async function grabVideo(targetElementId) {
-	const say = (text, state) => {
-		const id = 'save-to-taste-toast';
-		let toast = document.getElementById(id);
-		if (!toast) {
-			toast = document.createElement('div');
-			toast.id = id;
-			toast.setAttribute('role', 'status');
-			Object.assign(toast.style, {
-				position: 'fixed',
-				right: '16px',
-				bottom: '16px',
-				zIndex: '2147483647',
-				padding: '10px 14px',
-				borderRadius: '10px',
-				background: 'rgb(24 24 24 / 0.94)',
-				color: 'white',
-				font: '13px/1.4 system-ui, -apple-system, sans-serif'
-			});
-			document.documentElement.append(toast);
-		}
-		toast.textContent = text;
-		toast.style.color = state === 'error' ? 'rgb(255 170 160)' : 'white';
-	};
+	const say = (text, state) => globalThis.tasteToast?.(text, state);
 
 	const target = browser.menus.getTargetElement(targetElementId);
 	const video =
@@ -187,14 +136,14 @@ async function grabVideo(targetElementId) {
 		const tick = () => {
 			const left = seconds - (performance.now() - started) / 1000;
 			if (left <= 0) return resolve();
-			say(`Recording for taste, ${Math.ceil(left)}s left`, 'busy');
+			say(`Recording, ${Math.ceil(left)}s`, 'busy');
 			setTimeout(tick, 250);
 		};
 		tick();
 	});
 	recorder.stop();
 	await stopped;
-	say('Uploading to taste…', 'busy');
+	say('Saving…', 'busy');
 	const bytes = await new Blob(chunks, { type: 'video/webm' }).arrayBuffer();
 	return { mode: 'recorded', bytes, width, height };
 }
@@ -211,14 +160,29 @@ browser.runtime.onInstalled.addListener(() => {
 
 browser.action.onClicked.addListener(() => browser.runtime.openOptionsPage());
 
-const toast = (tab, frameId, text, state) =>
-	browser.scripting
-		.executeScript({
-			target: { tabId: tab.id, frameIds: [frameId ?? 0] },
-			func: showToast,
+// Shows the indicator by the cursor (page.js). page.js is declared for every
+// page, but tabs opened before install don't have it yet, so it's injected on
+// demand; pages extensions can't touch (about:, the add-on store) get none.
+const toast = async (tab, frameId, text, state) => {
+	const target = { tabId: tab.id, frameIds: [frameId ?? 0] };
+	const show = (t, s) => {
+		if (!globalThis.tasteToast) return false;
+		globalThis.tasteToast(t, s);
+		return true;
+	};
+	try {
+		const [shown] = await browser.scripting.executeScript({
+			target,
+			func: show,
 			args: [text, state]
-		})
-		.catch(() => undefined);
+		});
+		if (shown?.result) return;
+		await browser.scripting.executeScript({ target, files: ['page.js'] });
+		await browser.scripting.executeScript({ target, func: show, args: [text, state] });
+	} catch {
+		// No indicator here; the save itself still goes ahead.
+	}
+};
 
 const saveImage = async (info) => {
 	if (!isWebLink(info.srcUrl) && !info.srcUrl.startsWith('data:')) {
@@ -265,7 +229,7 @@ browser.menus.onClicked.addListener(async (info, tab) => {
 		browser.runtime.openOptionsPage();
 		return;
 	}
-	await toast(tab, info.frameId, 'Saving to taste…', 'busy');
+	await toast(tab, info.frameId, 'Saving…', 'busy');
 	try {
 		const { week } =
 			info.menuItemId === 'save-video' ? await saveVideo(info, tab) : await saveImage(info);
