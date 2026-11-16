@@ -1,0 +1,35 @@
+{
+	"manifest_version": 3,
+	"name": "Save to taste",
+	"version": "1.0.0",
+	"description": "Right-click an image or video to add it to this week on robi.work/taste, credited to the page it came from.",
+	"icons": {
+		"48": "icons/icon-48.png",
+		"96": "icons/icon-96.png"
+	},
+	"permissions": ["menus", "storage", "scripting"],
+	"host_permissions": ["<all_urls>"],
+	"background": {
+		"scripts": ["background.js"]
+	},
+	"action": {
+		"default_title": "Save to taste settings",
+		"default_icon": {
+			"32": "icons/icon-32.png",
+			"48": "icons/icon-48.png"
+		}
+	},
+	"options_ui": {
+		"page": "options.html",
+		"open_in_tab": true
+	},
+	"browser_specific_settings": {
+		"gecko": {
+			"id": "save-to-taste@robi.work",
+			"strict_min_version": "142.0",
+			"data_collection_permissions": {
+				"required": ["websiteContent", "browsingActivity"]
+			}
+		}
+	}
+}

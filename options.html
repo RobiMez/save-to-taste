@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>Save to taste</title>
+		<style>
+			:root {
+				color-scheme: light dark;
+				--ink: #2b2b2b;
+				--muted: #6b6b6b;
+				--fill: #f4f4f2;
+				--line: #d8d8d4;
+				--bg: #fdfdfc;
+				--bad: #b3261e;
+				--good: #2e7d4f;
+			}
+			@media (prefers-color-scheme: dark) {
+				:root {
+					--ink: #e8e8e6;
+					--muted: #a3a3a0;
+					--fill: #2a2d2c;
+					--line: #3f4342;
+					--bg: #1f2221;
+					--bad: #f2a69e;
+					--good: #8fd3a8;
+				}
+			}
+			body {
+				margin: 0;
+				background: var(--bg);
+				color: var(--ink);
+				font:
+					15px/1.6 system-ui,
+					-apple-system,
+					sans-serif;
+				-webkit-font-smoothing: antialiased;
+			}
+			main {
+				max-width: 34rem;
+				margin: 0 auto;
+				padding: 48px 16px;
+				display: flex;
+				flex-direction: column;
+				gap: 20px;
+			}
+			h1 {
+				margin: 0;
+				font-size: 28px;
+				font-weight: 300;
+			}
+			p {
+				margin: 0;
+				color: var(--muted);
+			}
+			a {
+				color: inherit;
+			}
+			label {
+				display: flex;
+				flex-direction: column;
+				gap: 6px;
+				font-size: 13px;
+				color: var(--muted);
+			}
+			input {
+				font: inherit;
+				color: var(--ink);
+				background: var(--fill);
+				border: 1px solid var(--line);
+				border-radius: 8px;
+				padding: 9px 12px;
+			}
+			.row {
+				display: flex;
+				gap: 8px;
+				align-items: center;
+			}
+			button {
+				font: inherit;
+				font-size: 14px;
+				color: var(--bg);
+				background: var(--ink);
+				border: 0;
+				border-radius: 8px;
+				padding: 9px 16px;
+				cursor: pointer;
+			}
+			#status {
+				font-size: 14px;
+			}
+			#status.bad {
+				color: var(--bad);
+			}
+			#status.good {
+				color: var(--good);
+			}
+		</style>
+	</head>
+	<body>
+		<main>
+			<h1>Save to taste</h1>
+			<p>
+				Right-click an image or a video on any page and choose Save to taste. It goes on top of this
+				week, credited to the page it came from. Videos that stream (like Pinterest's) are recorded
+				as they play, so a 12-second clip takes 12 seconds.
+			</p>
+			<p>
+				Make a token in the
+				<a href="https://www.robi.work/taste/admin" target="_blank" rel="noopener">taste admin</a>
+				under Browser extension, then paste it here.
+			</p>
+			<form id="form" class="row">
+				<label style="flex: 1">
+					Token
+					<input
+						id="token"
+						type="password"
+						autocomplete="off"
+						spellcheck="false"
+						placeholder="taste_…"
+					/>
+				</label>
+				<button type="submit" style="align-self: flex-end">Save</button>
+			</form>
+			<span id="status" role="status"></span>
+		</main>
+		<script src="options.js"></script>
+	</body>
+</html>
