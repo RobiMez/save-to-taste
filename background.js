@@ -174,22 +174,22 @@ browser.action.onClicked.addListener(() => browser.runtime.openOptionsPage());
 // Shows the indicator by the cursor (page.js). page.js is declared for every
 // page, but tabs opened before install don't have it yet, so it's injected on
 // demand; pages extensions can't touch (about:, the add-on store) get none.
-const toast = async (tab, frameId, text, state) => {
+const toast = async (tab, frameId, text, state, options = {}) => {
 	const target = { tabId: tab.id, frameIds: [frameId ?? 0] };
-	const show = (t, s) => {
+	const show = (t, s, o) => {
 		if (!globalThis.tasteToast) return false;
-		globalThis.tasteToast(t, s);
+		globalThis.tasteToast(t, s, o);
 		return true;
 	};
 	try {
 		const [shown] = await browser.scripting.executeScript({
 			target,
 			func: show,
-			args: [text, state]
+			args: [text, state, options]
 		});
 		if (shown?.result) return;
 		await browser.scripting.executeScript({ target, files: ['page.js'] });
-		await browser.scripting.executeScript({ target, func: show, args: [text, state] });
+		await browser.scripting.executeScript({ target, func: show, args: [text, state, options] });
 	} catch {
 		// No indicator here; the save itself still goes ahead.
 	}
@@ -276,6 +276,28 @@ const mediaUnderCursor = async (info, tab) => {
 	return result?.result ?? null;
 };
 
+// The note typed into the save card. The page sends it here because the
+// token lives only in this script; taste-api lets a token note only the
+// entries it added itself.
+browser.runtime.onMessage.addListener(async (message) => {
+	if (message?.type !== 'taste-note') return undefined;
+	const { token } = await browser.storage.local.get('token');
+	if (!token) return { error: 'Add your token in the Save to taste settings first.' };
+	try {
+		const response = await fetch(`${await apiBase()}/ext/entries/${Number(message.entryId)}`, {
+			method: 'PATCH',
+			headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+			body: JSON.stringify({ note: String(message.note ?? '') })
+		});
+		const body = await response.json().catch(() => ({}));
+		return response.ok
+			? { ok: true }
+			: { error: body.error ?? `taste answered ${response.status}.` };
+	} catch {
+		return { error: "Can't reach taste.robi.work." };
+	}
+});
+
 browser.menus.onClicked.addListener(async (info, tab) => {
 	if (!tab?.id) return;
 	const { token } = await browser.storage.local.get('token');
@@ -284,7 +306,8 @@ browser.menus.onClicked.addListener(async (info, tab) => {
 		browser.runtime.openOptionsPage();
 		return;
 	}
-	await toast(tab, info.frameId, 'Saving…', 'busy');
+	// The card opens with the note box, so the why can be typed while it saves.
+	await toast(tab, info.frameId, 'Saving…', 'busy', { note: true });
 	try {
 		let saved;
 		if (info.menuItemId === 'save-under-cursor') {
@@ -297,13 +320,15 @@ browser.menus.onClicked.addListener(async (info, tab) => {
 		} else {
 			saved = info.menuItemId === 'save-video' ? await saveVideo(info, tab) : await saveImage(info);
 		}
-		const { week } = saved;
+		const { week, entry } = saved;
 		const day = new Date(`${week}T12:00:00Z`).toLocaleDateString('en-US', {
 			month: 'short',
 			day: 'numeric',
 			timeZone: 'UTC'
 		});
-		await toast(tab, info.frameId, `Saved to taste, week of ${day}`, 'done');
+		await toast(tab, info.frameId, `Saved to taste, week of ${day}`, 'done', {
+			entryId: entry.id
+		});
 	} catch (error) {
 		await toast(tab, info.frameId, error.message || 'Saving failed.', 'error');
 	}
