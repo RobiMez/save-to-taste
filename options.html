@@ -68,13 +68,13 @@
 				color: var(--ink);
 				background: var(--fill);
 				border: 1px solid var(--line);
-				border-radius: 8px;
+				border-radius: 12px;
 				padding: 9px 12px;
 			}
-			.row {
+			form {
 				display: flex;
-				gap: 8px;
-				align-items: center;
+				flex-direction: column;
+				gap: 14px;
 			}
 			button {
 				font: inherit;
@@ -82,9 +82,10 @@
 				color: var(--bg);
 				background: var(--ink);
 				border: 0;
-				border-radius: 8px;
+				border-radius: 12px;
 				padding: 9px 16px;
 				cursor: pointer;
+				align-self: flex-start;
 			}
 			#status {
 				font-size: 14px;
@@ -106,22 +107,35 @@
 				as they play, so a 12-second clip takes 12 seconds.
 			</p>
 			<p>
-				Make a token in the
-				<a href="https://www.robi.work/taste/admin" target="_blank" rel="noopener">taste admin</a>
-				under Browser extension, then paste it here.
+				It saves to a server you run. Paste the server's address and a token it gave you. The
+				<a href="https://github.com/RobiMez/save-to-taste#the-server" target="_blank" rel="noopener"
+					>README</a
+				>
+				says what the server has to answer.
 			</p>
-			<form id="form" class="row">
-				<label style="flex: 1">
+			<form id="form">
+				<label>
+					Server
+					<input
+						id="server"
+						type="text"
+						inputmode="url"
+						autocomplete="off"
+						spellcheck="false"
+						placeholder="https://taste.example.com"
+					/>
+				</label>
+				<label>
 					Token
 					<input
 						id="token"
 						type="password"
 						autocomplete="off"
 						spellcheck="false"
-						placeholder="taste_…"
+						placeholder="From your server"
 					/>
 				</label>
-				<button type="submit" style="align-self: flex-end">Save</button>
+				<button type="submit">Save</button>
 			</form>
 			<span id="status" role="status"></span>
 		</main>

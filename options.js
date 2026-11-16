@@ -1,7 +1,8 @@
-const apiBase = async () =>
-	(await browser.storage.local.get('api')).api ?? 'https://taste.robi.work';
+// Settings: the server to save to and the token it gave you, both kept in
+// storage.local (keys `api` and `token`), where only the extension reads them.
 const form = document.getElementById('form');
-const input = document.getElementById('token');
+const serverInput = document.getElementById('server');
+const tokenInput = document.getElementById('token');
 const status = document.getElementById('status');
 
 const show = (text, kind) => {
@@ -9,29 +10,57 @@ const show = (text, kind) => {
 	status.className = kind ?? '';
 };
 
-// Checks the token against taste-api, so a typo shows up here, not on the first save.
-const check = async (token) => {
-	if (!token) return show('No token yet.');
-	show('Checking…');
+const LOCAL_HOSTS = ['localhost', '127.0.0.1', '[::1]'];
+
+// The server's base address without a trailing slash, or null. https only, so
+// the token never crosses the network in the clear; http is fine on this machine.
+const serverFrom = (value) => {
+	const text = value.trim();
+	if (!text) return null;
 	try {
-		const response = await fetch(`${await apiBase()}/ext/ping`, {
-			headers: { Authorization: `Bearer ${token}` }
-		});
-		if (response.ok) show('Connected. Right-click an image or a video to save it.', 'good');
-		else show('That token was not accepted. Make a new one in the admin.', 'bad');
+		const url = new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(text) ? text : `https://${text}`);
+		const local = LOCAL_HOSTS.includes(url.hostname);
+		if (url.protocol !== 'https:' && !(url.protocol === 'http:' && local)) return null;
+		return url.origin + url.pathname.replace(/\/+$/, '');
 	} catch {
-		show("Can't reach taste.robi.work right now.", 'bad');
+		return null;
 	}
 };
 
-browser.storage.local.get('token').then(({ token }) => {
-	if (token) input.value = token;
-	check(token);
+// Asks the server about the token, so a typo shows up here, not on the first save.
+const check = async (api, token) => {
+	if (!api) return show('No server yet.');
+	if (!token) return show('No token yet.');
+	const host = new URL(api).host;
+	show('Checking…');
+	try {
+		const response = await fetch(`${api}/ext/ping`, {
+			headers: { Authorization: `Bearer ${token}` }
+		});
+		if (response.ok) show('Connected. Right-click an image or a video to save it.', 'good');
+		else if (response.status === 401 || response.status === 403)
+			show(`${host} didn't accept that token.`, 'bad');
+		else show(`${host} answered ${response.status}. Is it a Save to taste server?`, 'bad');
+	} catch {
+		show(`Can't reach ${host} right now.`, 'bad');
+	}
+};
+
+browser.storage.local.get(['api', 'token']).then(({ api, token }) => {
+	if (api) serverInput.value = api;
+	if (token) tokenInput.value = token;
+	check(api, token);
 });
 
 form.addEventListener('submit', async (event) => {
 	event.preventDefault();
-	const token = input.value.trim();
-	await browser.storage.local.set({ token });
-	check(token);
+	const api = serverFrom(serverInput.value);
+	if (serverInput.value.trim() && !api) {
+		show('The server needs an https:// address (http:// works for localhost).', 'bad');
+		return;
+	}
+	const token = tokenInput.value.trim();
+	if (api) serverInput.value = api;
+	await browser.storage.local.set({ api: api ?? '', token });
+	check(api, token);
 });

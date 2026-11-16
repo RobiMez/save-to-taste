@@ -1,14 +1,17 @@
 {
-	"name": "taste-extension",
+	"name": "save-to-taste",
 	"private": true,
-	"description": "Save to taste: a Firefox extension that adds right-clicked images and videos to robi.work/taste.",
+	"description": "Save to taste: a Firefox extension that saves right-clicked images and videos to your own taste server.",
+	"license": "MIT",
 	"scripts": {
-		"lint": "web-ext lint --source-dir . --ignore-files package.json pnpm-lock.yaml sign.sh 'icons/*.svg' node_modules",
-		"build": "web-ext build --source-dir . --artifacts-dir dist --overwrite-dest --ignore-files package.json pnpm-lock.yaml sign.sh 'icons/*.svg' node_modules dist",
-		"run": "web-ext run --source-dir . --ignore-files package.json pnpm-lock.yaml sign.sh node_modules dist",
-		"sign": "web-ext sign --channel=unlisted --source-dir . --artifacts-dir dist --ignore-files package.json pnpm-lock.yaml 'icons/*.svg' node_modules dist"
+		"lint": "web-ext lint --source-dir . --ignore-files package.json pnpm-lock.yaml README.md 'icons/*.svg' node_modules",
+		"build": "web-ext build --source-dir . --artifacts-dir dist --overwrite-dest --ignore-files package.json pnpm-lock.yaml README.md 'icons/*.svg' node_modules dist",
+		"start": "web-ext run --source-dir . --ignore-files package.json pnpm-lock.yaml README.md node_modules dist",
+		"format": "prettier --write .",
+		"sign": "web-ext sign --channel=unlisted --source-dir . --artifacts-dir dist --ignore-files package.json pnpm-lock.yaml README.md 'icons/*.svg' node_modules dist"
 	},
 	"devDependencies": {
+		"prettier": "3.6.2",
 		"web-ext": "10.8.0"
 	}
 }

@@ -1,8 +1,8 @@
 {
 	"manifest_version": 3,
 	"name": "Save to taste",
-	"version": "1.1.0",
-	"description": "Right-click an image or video to add it to this week on robi.work/taste, credited to the page it came from.",
+	"version": "1.2.0",
+	"description": "Right-click an image or video to save it to your own taste server, with a note on why you liked it and a link to where it came from.",
 	"icons": {
 		"48": "icons/icon-48.png",
 		"96": "icons/icon-96.png"

@@ -1,17 +1,28 @@
 // Save to taste: right-click an image or a video, and it's added on top of
-// this week on robi.work/taste, credited to the page it came from.
+// this week on your taste server, credited to the page it came from.
 //
-// Everything talks to taste-api from here, never from the page: the token
+// Everything talks to the server from here, never from the page: the token
 // stays out of page scripts, and a page's CSP can't block the upload. Videos
 // with a real file are fetched like images; streamed ones (a blob: source,
 // as on Pinterest) are recorded from the playing element in the page and
-// handed back as bytes.
+// handed back as bytes. The server's side is in the README.
 
-// Overridable for local testing (storage key `api`); nothing in the UI sets it.
-const apiBase = async () =>
-	(await browser.storage.local.get('api')).api ?? 'https://taste.robi.work';
+// A failure on the server's side (or on the way to it). Retrying with a
+// smaller copy of the image won't help with these.
+class ServerError extends Error {}
 
-// The Monday of the viewer's local week, as YYYY-MM-DD (what taste-api calls a week).
+// The server and token from the settings page (options.js).
+const settings = async () => {
+	const { api, token } = await browser.storage.local.get(['api', 'token']);
+	if (!api || !token) {
+		throw new ServerError('Set your server and token in the Save to taste settings first.');
+	}
+	return { api, token };
+};
+
+const unreachable = (api) => new ServerError(`Can't reach ${new URL(api).host}.`);
+
+// The Monday of the viewer's local week, as YYYY-MM-DD (the server files entries by week).
 const thisMonday = () => {
 	const now = new Date();
 	const day = new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate(), 12));
@@ -61,9 +72,50 @@ const fetchBytes = async (url) => {
 	return { bytes: await response.arrayBuffer(), type: response.headers.get('content-type') ?? '' };
 };
 
-const upload = async (bytes, type, { source, width, height }) => {
-	const { token } = await browser.storage.local.get('token');
-	if (!token) throw new Error('Add your token in the Save to taste settings first.');
+const STALL_MS = 60_000;
+
+// XHR rather than fetch, because only XHR reports how far an upload has got,
+// and a minute of recorded video is tens of megabytes on a slow uplink. An
+// upload that stops moving for a minute is given up on.
+const post = (url, headers, body, onProgress) =>
+	new Promise((resolve, reject) => {
+		const request = new XMLHttpRequest();
+		let stall;
+		const watch = () => {
+			clearTimeout(stall);
+			stall = setTimeout(() => request.abort(), STALL_MS);
+		};
+		request.open('POST', url);
+		for (const [name, value] of Object.entries(headers)) request.setRequestHeader(name, value);
+		request.upload.onprogress = (event) => {
+			watch();
+			if (event.lengthComputable) onProgress?.(event.loaded, event.total);
+		};
+		request.onload = () => {
+			clearTimeout(stall);
+			let answer = {};
+			try {
+				answer = JSON.parse(request.responseText);
+			} catch {
+				// Not JSON; the status alone has to do.
+			}
+			resolve({
+				ok: request.status >= 200 && request.status < 300,
+				status: request.status,
+				answer
+			});
+		};
+		request.onerror = () => {
+			clearTimeout(stall);
+			reject(new Error('network'));
+		};
+		request.onabort = () => reject(new ServerError('The upload stopped moving. Try again.'));
+		watch();
+		request.send(body);
+	});
+
+const upload = async (bytes, type, { source, width, height }, onProgress) => {
+	const { api, token } = await settings();
 	const params = new URLSearchParams({ week: thisMonday() });
 	if (source) params.set('source', source);
 	if (width && height) {
@@ -72,20 +124,20 @@ const upload = async (bytes, type, { source, width, height }) => {
 	}
 	let response;
 	try {
-		response = await fetch(`${await apiBase()}/ext/entries?${params}`, {
-			method: 'POST',
-			headers: {
-				Authorization: `Bearer ${token}`,
-				'Content-Type': type || 'application/octet-stream'
-			},
-			body: bytes
-		});
-	} catch {
-		throw new Error("Can't reach taste.robi.work.");
+		response = await post(
+			`${api}/ext/entries?${params}`,
+			{ Authorization: `Bearer ${token}`, 'Content-Type': type || 'application/octet-stream' },
+			bytes,
+			onProgress
+		);
+	} catch (error) {
+		throw error instanceof ServerError ? error : unreachable(api);
 	}
-	const body = await response.json().catch(() => ({}));
-	if (!response.ok) throw new Error(body.error ?? `taste answered ${response.status}.`);
-	return body;
+	const { answer } = response;
+	if (!response.ok) {
+		throw new ServerError(answer.error ?? `The server answered ${response.status}.`);
+	}
+	return answer;
 };
 
 // ---- In-page helper. Injected with scripting.executeScript, so it's
@@ -133,7 +185,12 @@ async function grabVideo(targetElementId) {
 		60
 	);
 	video.currentTime = 0;
-	await video.play().catch(() => undefined);
+	// play() can wait forever on a stream the site has stopped feeding.
+	await Promise.race([
+		video.play().catch(() => undefined),
+		new Promise((resolve) => setTimeout(resolve, 8000))
+	]);
+	if (video.paused) return { error: "The video won't play from here. Start it, then save again." };
 	recorder.start(1000);
 	const started = performance.now();
 	await new Promise((resolve) => {
@@ -164,8 +221,8 @@ browser.runtime.onInstalled.addListener(() => {
 		contexts: ['page', 'link', 'frame'],
 		visible: false
 	});
-	browser.storage.local.get('token').then(({ token }) => {
-		if (!token) browser.runtime.openOptionsPage();
+	browser.storage.local.get(['api', 'token']).then(({ api, token }) => {
+		if (!api || !token) browser.runtime.openOptionsPage();
 	});
 });
 
@@ -195,9 +252,9 @@ const toast = async (tab, frameId, text, state, options = {}) => {
 	}
 };
 
-const saveImage = async (info) => {
+const saveImage = async (info, onProgress) => {
 	if (!isWebLink(info.srcUrl) && !info.srcUrl.startsWith('data:')) {
-		throw new Error("This image can't be saved from here. Save it and drop it into the admin.");
+		throw new Error("This image can't be saved from here. Download it and add it on your server.");
 	}
 	let lastError;
 	for (const candidate of info.srcUrl.startsWith('data:')
@@ -205,17 +262,16 @@ const saveImage = async (info) => {
 		: imageCandidates(info.srcUrl)) {
 		try {
 			const { bytes, type } = await fetchBytes(candidate);
-			return await upload(bytes, type, { source: sourceOf(info) });
+			return await upload(bytes, type, { source: sourceOf(info) }, onProgress);
 		} catch (error) {
 			lastError = error;
-			// A rejection from taste itself won't get better with a smaller copy.
-			if (error.message?.startsWith('taste') || error.message?.includes('token')) throw error;
+			if (error instanceof ServerError) throw error;
 		}
 	}
 	throw lastError;
 };
 
-const saveVideo = async (info, tab) => {
+const saveVideo = async (info, tab, onProgress) => {
 	const [result] = await browser.scripting.executeScript({
 		target: { tabId: tab.id, frameIds: [info.frameId ?? 0] },
 		func: grabVideo,
@@ -227,9 +283,14 @@ const saveVideo = async (info, tab) => {
 	const source = sourceOf(info);
 	if (video.mode === 'file') {
 		const { bytes, type } = await fetchBytes(video.src);
-		return upload(bytes, type, { source, width: video.width, height: video.height });
+		return upload(bytes, type, { source, width: video.width, height: video.height }, onProgress);
 	}
-	return upload(video.bytes, 'video/webm', { source, width: video.width, height: video.height });
+	return upload(
+		video.bytes,
+		'video/webm',
+		{ source, width: video.width, height: video.height },
+		onProgress
+	);
 };
 
 // When the right-click didn't land on an image or video itself, ask the page
@@ -277,14 +338,17 @@ const mediaUnderCursor = async (info, tab) => {
 };
 
 // The note typed into the save card. The page sends it here because the
-// token lives only in this script; taste-api lets a token note only the
-// entries it added itself.
+// token lives only in this script.
 browser.runtime.onMessage.addListener(async (message) => {
 	if (message?.type !== 'taste-note') return undefined;
-	const { token } = await browser.storage.local.get('token');
-	if (!token) return { error: 'Add your token in the Save to taste settings first.' };
+	let api, token;
 	try {
-		const response = await fetch(`${await apiBase()}/ext/entries/${Number(message.entryId)}`, {
+		({ api, token } = await settings());
+	} catch (error) {
+		return { error: error.message };
+	}
+	try {
+		const response = await fetch(`${api}/ext/entries/${Number(message.entryId)}`, {
 			method: 'PATCH',
 			headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
 			body: JSON.stringify({ note: String(message.note ?? '') })
@@ -292,22 +356,50 @@ browser.runtime.onMessage.addListener(async (message) => {
 		const body = await response.json().catch(() => ({}));
 		return response.ok
 			? { ok: true }
-			: { error: body.error ?? `taste answered ${response.status}.` };
+			: { error: body.error ?? `The server answered ${response.status}.` };
 	} catch {
-		return { error: "Can't reach taste.robi.work." };
+		return { error: unreachable(api).message };
 	}
 });
 
+// Firefox suspends an idle background page after 30 seconds, and a save that's
+// still running only buys it one more 30. Recording a minute of video and
+// uploading it takes longer than that, so the save died halfway and left the
+// card on "Saving…". Any call into Firefox counts as activity, so one runs
+// every 20 seconds while a save is going.
+const keepAwake = () => {
+	const timer = setInterval(() => browser.runtime.getPlatformInfo(), 20_000);
+	return () => clearInterval(timer);
+};
+
+// Files under this size upload too fast for a percentage to mean anything.
+const SHOW_PROGRESS_FROM = 2_000_000;
+
 browser.menus.onClicked.addListener(async (info, tab) => {
 	if (!tab?.id) return;
-	const { token } = await browser.storage.local.get('token');
-	if (!token) {
-		await toast(tab, info.frameId, 'Add your token in the Save to taste settings first.', 'error');
+	// One card update at a time, in order, so a late progress update can't
+	// land after "Saved" and reopen the card.
+	let updates = Promise.resolve();
+	const say = (text, state, options) =>
+		(updates = updates.then(() => toast(tab, info.frameId, text, state, options)));
+	try {
+		await settings();
+	} catch (error) {
+		await say(error.message, 'error');
 		browser.runtime.openOptionsPage();
 		return;
 	}
+	const release = keepAwake();
+	let shown = -1;
+	const onProgress = (loaded, total) => {
+		if (total < SHOW_PROGRESS_FROM) return;
+		const percent = Math.floor((loaded / total) * 100);
+		if (percent < shown + 5) return;
+		shown = percent;
+		say(`Uploading, ${percent}%`, 'busy');
+	};
 	// The card opens with the note box, so the why can be typed while it saves.
-	await toast(tab, info.frameId, 'Saving…', 'busy', { note: true });
+	await say('Saving…', 'busy', { note: true });
 	try {
 		let saved;
 		if (info.menuItemId === 'save-under-cursor') {
@@ -315,10 +407,13 @@ browser.menus.onClicked.addListener(async (info, tab) => {
 			if (!found) throw new Error('Nothing to save under the cursor.');
 			saved =
 				found.kind === 'video'
-					? await saveVideo(info, tab)
-					: await saveImage({ ...info, srcUrl: found.src });
+					? await saveVideo(info, tab, onProgress)
+					: await saveImage({ ...info, srcUrl: found.src }, onProgress);
 		} else {
-			saved = info.menuItemId === 'save-video' ? await saveVideo(info, tab) : await saveImage(info);
+			saved =
+				info.menuItemId === 'save-video'
+					? await saveVideo(info, tab, onProgress)
+					: await saveImage(info, onProgress);
 		}
 		const { week, entry } = saved;
 		const day = new Date(`${week}T12:00:00Z`).toLocaleDateString('en-US', {
@@ -326,10 +421,10 @@ browser.menus.onClicked.addListener(async (info, tab) => {
 			day: 'numeric',
 			timeZone: 'UTC'
 		});
-		await toast(tab, info.frameId, `Saved to taste, week of ${day}`, 'done', {
-			entryId: entry.id
-		});
+		await say(`Saved to taste, week of ${day}`, 'done', { entryId: entry.id });
 	} catch (error) {
-		await toast(tab, info.frameId, error.message || 'Saving failed.', 'error');
+		await say(error.message || 'Saving failed.', 'error');
+	} finally {
+		release();
 	}
 });
