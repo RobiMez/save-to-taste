@@ -12,13 +12,36 @@
 	const GAP = 14;
 	let cursor = null;
 
+	// Sites often lay a transparent overlay over their images (Cosmos's grid
+	// does), so a right-click lands on a div and Firefox offers no image menu.
+	// This finds the picture or video under the cursor, through the overlays,
+	// for the background's "under the cursor" menu item.
+	let media = null;
+	const mediaAt = (x, y) =>
+		document
+			.elementsFromPoint(x, y)
+			.find(
+				(el) =>
+					(el instanceof HTMLImageElement && el.naturalWidth >= 64 && el.currentSrc) ||
+					(el instanceof HTMLVideoElement && el.videoWidth > 0)
+			) ?? null;
+
 	addEventListener(
 		'contextmenu',
 		(event) => {
 			cursor = { x: event.clientX, y: event.clientY };
+			media = mediaAt(event.clientX, event.clientY);
 		},
 		{ capture: true, passive: true }
 	);
+
+	globalThis.tasteMedia = () => media;
+	globalThis.tasteMediaKind = () =>
+		media instanceof HTMLVideoElement
+			? 'video'
+			: media instanceof HTMLImageElement
+				? 'image'
+				: null;
 
 	const svg = (children) => {
 		const icon = document.createElementNS(SVG, 'svg');

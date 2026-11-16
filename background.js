@@ -98,10 +98,14 @@ async function grabVideo(targetElementId) {
 	const say = (text, state) => globalThis.tasteToast?.(text, state);
 
 	const target = browser.menus.getTargetElement(targetElementId);
+	// The right-clicked element, or (under an overlay) the video page.js found.
+	const underCursor = globalThis.tasteMedia?.();
 	const video =
 		target instanceof HTMLVideoElement
 			? target
-			: (target?.closest?.('video') ?? target?.querySelector?.('video'));
+			: (target?.closest?.('video') ??
+				target?.querySelector?.('video') ??
+				(underCursor instanceof HTMLVideoElement ? underCursor : null));
 	if (!video) return { error: 'No video where you clicked.' };
 
 	const width = video.videoWidth;
@@ -153,6 +157,13 @@ async function grabVideo(targetElementId) {
 browser.runtime.onInstalled.addListener(() => {
 	browser.menus.create({ id: 'save-image', title: 'Save image to taste', contexts: ['image'] });
 	browser.menus.create({ id: 'save-video', title: 'Save video to taste', contexts: ['video'] });
+	// Shown only when page.js finds media under an overlay (see menus.onShown).
+	browser.menus.create({
+		id: 'save-under-cursor',
+		title: 'Save image to taste',
+		contexts: ['page', 'link', 'frame'],
+		visible: false
+	});
 	browser.storage.local.get('token').then(({ token }) => {
 		if (!token) browser.runtime.openOptionsPage();
 	});
@@ -221,6 +232,50 @@ const saveVideo = async (info, tab) => {
 	return upload(video.bytes, 'video/webm', { source, width: video.width, height: video.height });
 };
 
+// When the right-click didn't land on an image or video itself, ask the page
+// whether one sits under the cursor and show the item if so. Firefox lets the
+// open menu be refreshed after this async check; the instance number drops a
+// stale answer from a menu that has already closed.
+let menuInstance = 0;
+browser.menus.onShown.addListener(async (info, tab) => {
+	if (info.contexts.includes('image') || info.contexts.includes('video') || !tab?.id) return;
+	const instance = ++menuInstance;
+	let kind = null;
+	try {
+		const [result] = await browser.scripting.executeScript({
+			target: { tabId: tab.id, frameIds: [info.frameId ?? 0] },
+			func: () => globalThis.tasteMediaKind?.() ?? null
+		});
+		kind = result?.result ?? null;
+	} catch {
+		// Not a page we can read.
+	}
+	if (instance !== menuInstance || !kind) return;
+	await browser.menus.update('save-under-cursor', {
+		visible: true,
+		title: kind === 'video' ? 'Save video to taste' : 'Save image to taste'
+	});
+	browser.menus.refresh();
+});
+
+browser.menus.onHidden.addListener(() => {
+	menuInstance++;
+	browser.menus.update('save-under-cursor', { visible: false });
+});
+
+// The image or video page.js found under the cursor.
+const mediaUnderCursor = async (info, tab) => {
+	const [result] = await browser.scripting.executeScript({
+		target: { tabId: tab.id, frameIds: [info.frameId ?? 0] },
+		func: () => {
+			const media = globalThis.tasteMedia?.();
+			if (!media) return null;
+			return { kind: globalThis.tasteMediaKind(), src: media.currentSrc || media.src };
+		}
+	});
+	return result?.result ?? null;
+};
+
 browser.menus.onClicked.addListener(async (info, tab) => {
 	if (!tab?.id) return;
 	const { token } = await browser.storage.local.get('token');
@@ -231,8 +286,18 @@ browser.menus.onClicked.addListener(async (info, tab) => {
 	}
 	await toast(tab, info.frameId, 'Saving…', 'busy');
 	try {
-		const { week } =
-			info.menuItemId === 'save-video' ? await saveVideo(info, tab) : await saveImage(info);
+		let saved;
+		if (info.menuItemId === 'save-under-cursor') {
+			const found = await mediaUnderCursor(info, tab);
+			if (!found) throw new Error('Nothing to save under the cursor.');
+			saved =
+				found.kind === 'video'
+					? await saveVideo(info, tab)
+					: await saveImage({ ...info, srcUrl: found.src });
+		} else {
+			saved = info.menuItemId === 'save-video' ? await saveVideo(info, tab) : await saveImage(info);
+		}
+		const { week } = saved;
 		const day = new Date(`${week}T12:00:00Z`).toLocaleDateString('en-US', {
 			month: 'short',
 			day: 'numeric',
