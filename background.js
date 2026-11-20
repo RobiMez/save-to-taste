@@ -271,6 +271,66 @@ const saveImage = async (info, onProgress) => {
 	throw lastError;
 };
 
+const FRAME_LONG_SIDE = 64;
+
+// One frame of a saved video as a small PNG, so the server can give it a
+// blurhash and swatches like an image without needing ffmpeg. It's read from
+// the bytes already in hand, so no site's CORS rules get a say. The frame is
+// a quarter of the way in, a second at most, since plenty of clips open on
+// black. Resolves null when it can't be read.
+const frameOf = (bytes, type) =>
+	new Promise((resolve) => {
+		const url = URL.createObjectURL(new Blob([bytes], { type }));
+		const video = document.createElement('video');
+		let done = false;
+		const finish = (frame) => {
+			if (done) return;
+			done = true;
+			URL.revokeObjectURL(url);
+			video.removeAttribute('src');
+			resolve(frame);
+		};
+		video.muted = true;
+		video.preload = 'auto';
+		video.onloadedmetadata = () => {
+			// A recording straight from MediaRecorder has no duration yet.
+			video.currentTime = Number.isFinite(video.duration) ? Math.min(1, video.duration / 4) : 0;
+		};
+		video.onseeked = () => {
+			try {
+				const scale = FRAME_LONG_SIDE / Math.max(video.videoWidth, video.videoHeight);
+				const canvas = document.createElement('canvas');
+				canvas.width = Math.max(1, Math.round(video.videoWidth * scale));
+				canvas.height = Math.max(1, Math.round(video.videoHeight * scale));
+				canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+				canvas.toBlob(finish, 'image/png');
+			} catch {
+				finish(null);
+			}
+		};
+		video.onerror = () => finish(null);
+		setTimeout(() => finish(null), 8000);
+		video.src = url;
+	});
+
+// Sends that frame for a video just saved. Optional on the server's side, so
+// any failure here (an older server answering 404 included) is ignored: the
+// video is saved either way.
+const sendFrame = async (entryId, bytes, type) => {
+	try {
+		const frame = await frameOf(bytes, type);
+		if (!frame || !entryId) return;
+		const { api, token } = await settings();
+		await fetch(`${api}/ext/entries/${Number(entryId)}/frame`, {
+			method: 'PUT',
+			headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'image/png' },
+			body: frame
+		});
+	} catch {
+		// No placeholder for this one.
+	}
+};
+
 const saveVideo = async (info, tab, onProgress) => {
 	const [result] = await browser.scripting.executeScript({
 		target: { tabId: tab.id, frameIds: [info.frameId ?? 0] },
@@ -281,16 +341,18 @@ const saveVideo = async (info, tab, onProgress) => {
 	if (!video) throw new Error("Couldn't reach the video on this page.");
 	if (video.error) throw new Error(video.error);
 	const source = sourceOf(info);
-	if (video.mode === 'file') {
-		const { bytes, type } = await fetchBytes(video.src);
-		return upload(bytes, type, { source, width: video.width, height: video.height }, onProgress);
-	}
-	return upload(
-		video.bytes,
-		'video/webm',
+	const { bytes, type } =
+		video.mode === 'file'
+			? await fetchBytes(video.src)
+			: { bytes: video.bytes, type: 'video/webm' };
+	const saved = await upload(
+		bytes,
+		type,
 		{ source, width: video.width, height: video.height },
 		onProgress
 	);
+	await sendFrame(saved.entry?.id, bytes, type);
+	return saved;
 };
 
 // When the right-click didn't land on an image or video itself, ask the page

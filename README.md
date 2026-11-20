@@ -6,7 +6,7 @@ A small card opens by the cursor while it saves, with a box for why you liked it
 
 I use it to fill [robi.work/taste](https://www.robi.work/taste), a week at a time.
 
-The extension is only half of it, though. It needs a server to save to, and you run that yourself. [The server](#the-server) lists the three routes it calls.
+The extension is only half of it, though. It needs a server to save to, and you run that yourself. [The server](#the-server) lists the routes it calls.
 
 ## What it does when you right-click
 
@@ -44,7 +44,7 @@ Then click the toolbar button, paste your server's address and a token from it, 
 
 ## The server
 
-Everything goes to the one address you set, with the token as `Authorization: Bearer <token>`. A server needs three routes under that address.
+Everything goes to the one address you set, with the token as `Authorization: Bearer <token>`. A server needs three routes under that address, and can answer a fourth.
 
 Mine runs robi.work/taste and lives in my site's repo, so it isn't here.
 
@@ -78,13 +78,17 @@ A recorded video is at most a minute of 6 Mbps WebM, so about 45 MB. Mine allows
 
 The note from the card, as `{ "note": "…" }`. Mine only lets a token write notes on entries that same token added, so a leaked token can't rewrite the rest of the page.
 
+### `PUT /ext/entries/:id/frame` ( optional )
+
+After saving a video, the extension grabs one frame of it as a 64px PNG and sends it here. It's from a quarter of the way in, a second at most, since plenty of clips open on black. Mine has no ffmpeg, so that frame is the only way it gets a blurhash and colour swatches for a video, the way it does for images. The extension ignores whatever this answers, so a server without the route still works.
+
 ### Errors
 
 Answer anything that isn't a 2xx with `{ "error": "…" }` and the card shows that text by the cursor.
 
 ### Tokens
 
-A token can write to your page, so treat it like a password. Mine are random and stored hashed, and they only work on these three routes. Mine also sends `Access-Control-Allow-Origin: *` on them and lets the `Authorization` and `Content-Type` headers through.
+A token can write to your page, so treat it like a password. Mine are random and stored hashed, and they only work on these routes. Mine also sends `Access-Control-Allow-Origin: *` on them and lets the `Authorization` and `Content-Type` headers through.
 
 ## Working on it
 
